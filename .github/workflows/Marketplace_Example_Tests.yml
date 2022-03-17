@@ -1,0 +1,43 @@
+#This example workflow will automatically run tests when Dependabot opens a PR.
+#Tests performed will output any issues detected incl plans to the PR.
+#Tests are performed against 'core' module using "config-tests.tfvars" which is only used for integration tests.
+#Documentation: https://github.com/marketplace/actions/terraform-tests-for-azure
+
+name: "Marketplace-Example-Dependabot-Automated-Tests"
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - 'core/**'
+
+jobs:
+# Dependabot will open a PR on terraform version changes, this 'dependabot' job is only used to test TF version changes by running a plan, apply and destroy in sequence.
+  dependabot-plan-apply-destroy:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: write
+      repository-projects: write
+    if: ${{ github.actor == 'dependabot[bot]' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Run Dependency Tests - Plan AND Apply AND Destroy
+        uses: 9718448/securehubv2-tests@v1.0.1
+        with:
+          test_type: plan-apply-destroy      ## (Required) Valid options are "plan", "plan-apply", "plan-apply-destroy". Default="plan"
+          path: core                         ## (Optional) Specify path TF module relevant to repo root. Default="."
+          tf_version: latest                 ## (Optional) Specifies version of Terraform to use. e.g: 1.1.0 Default="latest"
+          tf_vars_file: config-tests.tfvars  ## (Required) Specifies Terraform TFVARS file name inside module path (Testing vars)
+          tf_key: foundation-tests           ## (Required) AZ backend - Specifies name that will be given to terraform state file and plan artifact (testing state)
+          az_resource_group: rg-tfcore       ## (Required) AZ backend - AZURE Resource Group hosting terraform backend storage account
+          az_storage_acc: sa-tfcorebackend   ## (Required) AZ backend - AZURE terraform backend storage account
+          az_container_name: ghdeploytfstate ## (Required) AZ backend - AZURE storage container hosting state files 
+          arm_client_id: ${{ secrets.ARM_CLIENT_ID }}             ## (Required - Dependabot Secrets) ARM Client ID 
+          arm_client_secret: ${{ secrets.ARM_CLIENT_SECRET }}     ## (Required - Dependabot Secrets) ARM Client Secret
+          arm_subscription_id: ${{ secrets.ARM_SUBSCRIPTION_ID }} ## (Required - Dependabot Secrets) ARM Subscription ID
+          arm_tenant_id: ${{ secrets.ARM_TENANT_ID }}             ## (Required - Dependabot Secrets) ARM Tenant ID
+          github_token: ${{ secrets.GITHUB_TOKEN }}               ## (Required) Needed to comment output on PR's. ${{ secrets.GITHUB_TOKEN }} already has permissions.

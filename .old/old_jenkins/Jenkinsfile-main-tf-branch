@@ -1,0 +1,144 @@
+#!/usr/bin/env groovy
+
+// Scripted pipeline
+
+// Set config items (proccessed by Jenkins)
+// def config = []
+def config = [
+    "mailTo": "broadbridgek@aetna.com,sokolowskic@cvshealth.com",
+    "dockerImageName": env.DOCKERIMAGENAME, //provisioning/cvs-ubuntu-tf
+    "dockerImageTag": env.DOCKERIMAGETAG, //1.0.2
+    "dockerRepo": env.DOCKERREPO //harbor.corp.cvscaremark.com
+]
+currentBuild.displayName = "#${BUILD_NUMBER} ${ACTION}"
+
+//Set TF_TEMPLATE_DIR and TF_VARFILE
+env.TF_MAIN_CF_SRC = "../${env.SPOKE}/main.tf"
+env.TF_VARFILE = "../../VAR_FILES/SPOKES/${env.SPOKE}/spoke.tfvars"
+
+// handle validation
+env.TF_OUTPUT_JSON="tf.output.json"
+
+import org.jenkinsci.plugins.pipeline.modeldefinition.Utils
+
+// general purpose utility shared library (configured by Jenkins admin)
+@Library("cicd-util-library") _
+
+// terraform shared library from SCM
+library(
+  identifier: 'jenkins-library-terraform@master',
+  retriever: modernSCM(
+    [
+      $class: 'GitSCMSource',
+      remote: 'https://gitw.cvshealth.com/infrastructure/automation-eng/jenkins/jenkins-library-terraform.git'
+    ]
+  )
+)
+
+properties([buildDiscarder(logRotator(numToKeepStr: '10')), gitLabConnection('gitw'), [$class: 'JobRestrictionProperty']])
+
+//set job name and description (run "env" to see all possible environment variables that can be used to format the display name)
+currentBuild.result = 'SUCCESS'  // status in Jenkins
+// Don't update status in GitLab since this job is configured at runtime
+
+// color output
+ansiColor('xterm') {
+node ('automation-engineering') {
+
+  stage("Checkout") {
+    // clean up workspace at the end
+    //   if files are created as other users (or root), there can be problems doing the cleanup that are
+    //   difficult to fix without root access to the slave
+    cleanWs deleteDirs: true
+    checkout scm
+  }
+
+  try {
+    stage("Plan") {
+      if (env.ACTION == "plan") {
+        tfAction(config)
+      } else {
+        echo 'skipping stage...'
+        Utils.markStageSkippedForConditional('Plan')
+      }
+    }
+
+    stage("Apply") {
+      if (env.ACTION == "apply") {
+        tfAction(config)
+      } else {
+        echo 'skipping stage...'
+        Utils.markStageSkippedForConditional('Apply')
+      }
+    }
+
+    stage("Destroy") {
+      if (env.ACTION == "destroy") {
+        tfAction(config)
+      } else {
+        echo 'skipping stage...'
+        Utils.markStageSkippedForConditional('Destroy')
+      }
+    }
+
+  } catch (e) {
+    echo "Terraform failed"
+    // If there was an exception thrown, the build failed
+    currentBuild.result = 'FAILURE'  // status in Jenkins
+    // send mail notification if mailTo config is defined
+    if (config.mailTo) {
+      notify.email(message: e.toString(), mailTo: config.mailTo)
+    }
+    throw e
+  } finally {
+    cleanWs notFailBuild: true // always clean workspace
+  }
+
+} // node
+} // ansiColor
+
+def tfAction(Map config) {
+  echo "Apply stage"
+  withCredentials(bindings: [
+    azureServicePrincipal('azure_sp_ent'),
+    string(credentialsId: 'storage-account-tfstate-key', variable: 'ARM_ACCESS_KEY'),
+    string(credentialsId: 'argocd-token', variable: 'ARGOCDTOKEN'),
+    file(credentialsId: 'argocd-aks-repo-private-key', variable: 'ARGOCDREPOKEY'),
+  ]) {
+    // azureServicePrincipal sets AZURE_SUBSCRIPTION_ID, which may not be what is needed so specify below
+
+    // export ARM* credentials for terraform-azure
+    env.ARM_TENANT_ID = env.AZURE_TENANT_ID
+    env.ARM_CLIENT_ID = env.AZURE_CLIENT_ID
+    env.ARM_CLIENT_SECRET = env.AZURE_CLIENT_SECRET
+    env.ARM_SUBSCRIPTION_ID = "29ea5d6f-8539-4a95-8198-ca801994cbdb" // Just hardcode this since not using the value from the SP credential
+
+    // increase registry timeout for terraform init (default is 3)
+    env.TF_REGISTRY_CLIENT_TIMEOUT = "12"
+    
+    // handle TF_MAIN_CF_SRC if defined
+    env.TF_MAIN_CF_SRC  = env.TF_MAIN_CF_SRC  ? env.TF_MAIN_CF_SRC  : ""
+    if (! TF_MAIN_CF_SRC.isEmpty()) {
+      // enable tracing when using TF_MAIN_CF
+      env.TF_LOG = "WARN" // was warn
+      // copy main.tf from TF_MAIN_CF_SRC to TF_TEMPLATE_DIR
+      sh '''
+        cd $WORKSPACE
+        cd $TF_TEMPLATE_DIR
+        cp $TF_MAIN_CF_SRC .
+        cp ../../../argocd-bootstrap.sh .
+        cp $ARGOCDREPOKEY .
+      '''
+    }
+
+    try {
+      // terraform method is defined in the jenkins-plugin-ansible/vars/terraform.groovy file
+      terraform(config) // pass in config from the top of this Jenkinsfile
+    } catch (e) {
+      currentBuild.result = 'FAILURE'  // status in Jenkins
+      echo "Terraform failed"
+      throw e
+    }
+  }
+}
+

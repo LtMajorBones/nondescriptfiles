@@ -1,0 +1,103 @@
+name: "01_core"
+on:
+  workflow_dispatch:
+
+jobs:
+  Plan_Dev:
+    uses: 9718448/securehubv2/.github/workflows/az_tf_plan.yml@master
+    with:
+      path: core                            ## Path to terraform root module (Required)
+      tf_version: latest                    ## Terraform version e.g: 1.1.0 Default=latest (Optional)
+      az_resource_group: rg-tfcore          ## AZ backend - AZURE Resource Group hosting terraform backend storage acc (Required)
+      az_storage_acc: sa-tfcorebackend      ## AZ backend - AZURE terraform backend storage acc (Required)
+      az_container_name: ghdeploytfstate    ## AZ backend - AZURE storage container hosting state files (Required)
+      tf_key: core-dev000                   ## AZ backend - Specifies name that will be given to terraform state file and plan artifact (Required)
+      tf_vars_file: config-dev.tfvars       ## Terraform TFVARS (Required)
+      enable_TFSEC: true                    ## (Optional)  Enable TFSEC IaC scans (Private repo requires GitHub enterprise)
+    secrets:
+      arm_client_id: ${{ secrets.ARM_CLIENT_ID }}             ## ARM Client ID 
+      arm_client_secret: ${{ secrets.ARM_CLIENT_SECRET }}     ## ARM Client Secret
+      arm_subscription_id: ${{ secrets.ARM_SUBSCRIPTION_ID }} ## ARM Subscription ID
+      arm_tenant_id: ${{ secrets.ARM_TENANT_ID }}             ## ARM Tenant ID
+
+  Deploy_Dev:
+    needs: Plan_Dev
+    uses: 9718448/securehubv2/.github/workflows/az_tf_apply.yml@master
+    with:
+      path: core                            ## Path to terraform root module (Required)
+      tf_version: latest                    ## Terraform version e.g: 1.1.0 Default=latest (Optional)
+      az_resource_group: rg-tfcore          ## AZ backend - AZURE Resource Group hosting terraform backend storage acc (Required)
+      az_storage_acc: sa-tfcorebackend      ## AZ backend - AZURE terraform backend storage acc (Required)
+      az_container_name: ghdeploytfstate    ## AZ backend - AZURE storage container hosting state files (Required)
+      tf_key: core-dev000                   ## AZ backend - Specifies name of the terraform state file and workflow artifact to download (Required)
+      gh_environment: Development           ## GH Environment. Default=null - (Optional)
+    secrets:
+      arm_client_id: ${{ secrets.ARM_CLIENT_ID }}             ## ARM Client ID 
+      arm_client_secret: ${{ secrets.ARM_CLIENT_SECRET }}     ## ARM Client Secret
+      arm_subscription_id: ${{ secrets.ARM_SUBSCRIPTION_ID }} ## ARM Subscription ID
+      arm_tenant_id: ${{ secrets.ARM_TENANT_ID }}             ## ARM Tenant ID
+
+  Plan_Uat:
+    uses: 9718448/securehubv2/.github/workflows/az_tf_plan.yml@master
+    with:
+      path: core
+      az_resource_group: rg-tfcore
+      az_storage_acc: sa-tfcorebackend
+      az_container_name: ghdeploytfstate
+      tf_key: core-uat000
+      tf_vars_file: config-uat.tfvars
+      enable_TFSEC: true                       
+    secrets:
+      arm_client_id: ${{ secrets.ARM_CLIENT_ID }}
+      arm_client_secret: ${{ secrets.ARM_CLIENT_SECRET }}
+      arm_subscription_id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+      arm_tenant_id: ${{ secrets.ARM_TENANT_ID }}
+
+  Deploy_Uat:
+    needs: [Plan_Uat, Deploy_Dev]
+    uses: 9718448/securehubv2/.github/workflows/az_tf_apply.yml@master
+    with:
+      path: core
+      az_resource_group: rg-tfcore
+      az_storage_acc: sa-tfcorebackend
+      az_container_name: ghdeploytfstate
+      tf_key: core-uat000
+      gh_environment: UserAcceptanceTesting
+    secrets:
+      arm_client_id: ${{ secrets.ARM_CLIENT_ID }}
+      arm_client_secret: ${{ secrets.ARM_CLIENT_SECRET }}
+      arm_subscription_id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+      arm_tenant_id: ${{ secrets.ARM_TENANT_ID }}
+
+  Plan_Prod:
+    uses: 9718448/securehubv2/.github/workflows/az_tf_plan.yml@master
+    with:
+      path: core
+      tf_version: latest
+      az_resource_group: rg-tfcore
+      az_storage_acc: sa-tfcorebackend
+      az_container_name: ghdeploytfstate
+      tf_key: core-prod000
+      tf_vars_file: config-prod.tfvars
+      enable_TFSEC: true                          
+    secrets:
+      arm_client_id: ${{ secrets.ARM_CLIENT_ID }}
+      arm_client_secret: ${{ secrets.ARM_CLIENT_SECRET }}
+      arm_subscription_id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+      arm_tenant_id: ${{ secrets.ARM_TENANT_ID }}
+
+  Deploy_Prod:
+    needs: [Plan_Prod, Deploy_Uat]
+    uses: 9718448/securehubv2/.github/workflows/az_tf_apply.yml@master
+    with:
+      path: core
+      az_resource_group: rg-tfcore
+      az_storage_acc: sa-tfcorebackend
+      az_container_name: ghdeploytfstate
+      tf_key: core-prod000
+      gh_environment: Production
+    secrets:
+      arm_client_id: ${{ secrets.ARM_CLIENT_ID }}
+      arm_client_secret: ${{ secrets.ARM_CLIENT_SECRET }}
+      arm_subscription_id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+      arm_tenant_id: ${{ secrets.ARM_TENANT_ID }}
