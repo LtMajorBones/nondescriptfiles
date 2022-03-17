@@ -6,12 +6,12 @@ updates:
       interval: "daily"
 
   - package-ecosystem: "terraform" 
-    directory: "/core"
+    directory: "/01_core"
     schedule:
       interval: "weekly"
 
   - package-ecosystem: "terraform" 
-    directory: "/storage"
+    directory: "/02_storage"
     schedule:
       interval: "weekly"
 
